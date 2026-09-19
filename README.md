@@ -10,8 +10,8 @@
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| macOS Apple Silicon | `DSH Desktop-<版本>-arm64.dmg` | M1/M2/M3/M4 |
-| macOS Intel | `DSH Desktop-<版本>.dmg` | x64 |
+| macOS Apple Silicon | `DSH.Desktop-<版本>-arm64.dmg` | M1/M2/M3/M4 |
+| macOS Intel | `DSH.Desktop-<版本>.dmg` | x64 |
 | Windows 64 位 | `DSH-Desktop-Setup-<版本>.exe` | 一键安装，装完自动启动 |
 
 > 安装包未做代码签名：macOS 首次打开若提示"无法验证开发者"，右键 App → 打开，或到
