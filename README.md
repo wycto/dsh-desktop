@@ -33,6 +33,12 @@
 | 断网情况 | 本地没缓存时 npx 拉不到包 | 自动改用本地缓存版本（`npx --offline`） |
 | 出错时 | 面对命令行报错 | 中文横幅 + 日志提示，如端口被占用 |
 
+## 截图
+
+| 启动器：填好 IP 和端口，点一下就启动 | 内嵌界面：dsh 直接出现在窗口里 |
+|---|---|
+| ![DSH Desktop 启动器](docs/screenshots/launcher.png) | ![DSH Desktop 内嵌界面](docs/screenshots/embedded.png) |
+
 ## 下载安装
 
 前往 [GitHub Releases](https://github.com/wycto/dsh-desktop/releases) 下载对应平台的安装包：
