@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:" />
+  <title>DSH Web 桌面版</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <div class="bubble"><span></span><span></span><span></span></div>
+      </div>
+      <div class="title-wrap">
+        <div class="title">DSH Web 桌面版</div>
+        <div class="subtitle" id="env-line">正在检查运行环境…</div>
+      </div>
+    </div>
+    <div class="status-area">
+      <span id="status-chip" class="chip chip-idle">未启动</span>
+      <button id="btn-open-browser" class="btn ghost hidden" title="在系统浏览器中打开 dsh 页面">浏览器打开</button>
+      <button id="btn-home" class="btn ghost hidden">设置</button>
+      <button id="btn-stop" class="btn danger hidden">停止服务</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- 需要安装 Node -->
+    <section id="pane-install" class="pane hidden">
+      <div class="card install-card">
+        <div class="big-icon">⚠️</div>
+        <h1>需要安装 Node.js 环境</h1>
+        <p class="muted center">DSH 依赖 Node.js 运行，但这台电脑上还没有检测到。<br />点击下面的按钮即可自动下载并安装官方 LTS 版本，全程无需命令行。</p>
+        <div id="install-detail" class="muted small center hidden"></div>
+        <button id="btn-install" class="btn primary big">一键安装 Node.js <span id="install-ver"></span></button>
+        <div id="install-progress" class="progress-wrap hidden">
+          <div class="progress"><div id="install-bar" class="bar"></div></div>
+          <div id="install-msg" class="muted small center">准备中…</div>
+        </div>
+        <div id="install-error" class="error-box hidden"></div>
+        <a href="#" id="btn-manual" class="muted small">安装失败？手动前往 Node.js 官网下载</a>
+      </div>
+    </section>
+
+    <!-- 主面板 -->
+    <section id="pane-home" class="pane">
+      <div class="card">
+        <h1>启动 DSH Web</h1>
+        <p class="muted">填好地址和端口，点击启动即可。其余一切交给 DSH。</p>
+
+        <div class="field">
+          <label for="inp-host">监听 IP</label>
+          <input id="inp-host" list="host-presets" spellcheck="false" placeholder="127.0.0.1" />
+          <datalist id="host-presets">
+            <option value="127.0.0.1">仅本机访问（推荐）</option>
+            <option value="localhost">仅本机访问</option>
+          </datalist>
+          <div class="hint">一般保持 127.0.0.1（仅本机访问）。dsh 不支持 0.0.0.0（安全限制）。</div>
+        </div>
+
+        <div class="field">
+          <label for="inp-port">端口</label>
+          <input id="inp-port" type="number" min="1" max="65535" placeholder="8080" />
+          <div class="hint">1 – 65535；如提示端口被占用，换一个即可。</div>
+        </div>
+
+        <details class="advanced">
+          <summary>高级设置</summary>
+          <div class="field">
+            <label for="inp-cwd">工作目录</label>
+            <div class="row">
+              <input id="inp-cwd" spellcheck="false" />
+              <button id="btn-pick-cwd" class="btn ghost">选择…</button>
+            </div>
+            <div class="hint">dsh 以该目录作为默认工作区。</div>
+          </div>
+        </details>
+
+        <div class="check-row">
+          <label><input type="checkbox" id="chk-check-update" /> 启动时自动检测 dsh 更新</label>
+          <label><input type="checkbox" id="chk-auto-update" /> 发现更新后自动安装（不再询问）</label>
+        </div>
+
+        <div id="err-banner" class="error-box hidden"></div>
+
+        <button id="btn-back" class="btn ghost big back-btn hidden">返回 DSH 页面</button>
+        <button id="btn-start" class="btn primary big">启动服务</button>
+
+        <div id="status-card" class="status-card hidden">
+          <div class="spinner" id="status-spinner"></div>
+          <div class="status-text">
+            <div id="status-title">正在启动…</div>
+            <div id="status-sub" class="muted small">首次启动需要下载组件，可能需要几分钟，请耐心等待</div>
+          </div>
+          <div class="elapsed muted" id="elapsed">0s</div>
+        </div>
+
+        <details id="log-details" class="advanced">
+          <summary>运行日志</summary>
+          <div class="log-toolbar"><button id="btn-copy-log" class="btn ghost small">复制日志</button></div>
+          <pre id="log" class="log"></pre>
+        </details>
+      </div>
+      <div class="footer muted small" id="footer-info"></div>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

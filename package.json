@@ -1,0 +1,21 @@
+{
+  "name": "dsh-desktop",
+  "productName": "DSH Desktop",
+  "version": "1.0.0",
+  "description": "DSH Web 桌面启动器：双击即用，自动管理 Node 环境与 dsh 更新",
+  "main": "src/main.mjs",
+  "author": "weiyi",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "gen:icon": "node scripts/gen-icon.mjs",
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:all": "electron-builder --mac --win"
+  },
+  "devDependencies": {
+    "electron": "37.10.3",
+    "electron-builder": "26.15.3"
+  }
+}

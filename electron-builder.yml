@@ -1,0 +1,48 @@
+appId: com.dsh.web.desktop
+productName: DSH Desktop
+copyright: DSH Desktop
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - "!**/*.map"
+
+asar: true
+
+compression: normal
+
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  darkModeSupport: false
+
+dmg:
+  title: DSH Desktop ${version}
+  window:
+    width: 540
+    height: 380
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: true
+  perMachine: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  artifactName: DSH-Desktop-Setup-${version}.exe
