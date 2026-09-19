@@ -176,3 +176,39 @@ h1 { font-size: 20px; margin-bottom: 6px; }
 #btn-manual { display: inline-block; margin-top: 18px; color: var(--muted); }
 
 .footer { margin-top: 16px; text-align: center; }
+
+/* ---------- 手机 / 局域网访问 ---------- */
+.remote-card { margin-top: 16px; }
+.remote-card h1 { font-size: 16px; }
+.remote-card > p { margin-top: 6px; line-height: 1.6; }
+.remote-card .check-row { margin-top: 14px; }
+.remote-card .field { margin-top: 12px; }
+.remote-panel-row { display: flex; gap: 16px; margin-top: 14px; align-items: flex-start; }
+.remote-qr {
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+}
+.remote-qr svg { display: block; width: 132px; height: 132px; }
+.remote-links { flex: 1; min-width: 0; }
+.remote-urls { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.remote-url {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #f4f6ff;
+  border: 1px solid #dbe2ff;
+  border-radius: 6px;
+  padding: 6px 8px;
+  user-select: text;
+  word-break: break-all;
+  color: var(--primary-dark);
+}
+.hint.warn {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-top: 12px;
+}

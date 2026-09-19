@@ -7,6 +7,7 @@ const EVENT_MAP = {
   log: 'dsh:log',
   status: 'dsh:status',
   installProgress: 'env:install-progress',
+  remoteState: 'dsh:remote-state',
 }
 
 contextBridge.exposeInMainWorld('dsh', {
@@ -18,6 +19,8 @@ contextBridge.exposeInMainWorld('dsh', {
   start: (opts) => ipcRenderer.invoke('dsh:start', opts),
   stop: () => ipcRenderer.invoke('dsh:stop'),
   state: () => ipcRenderer.invoke('dsh:state'),
+  remoteInfo: () => ipcRenderer.invoke('remote:info'),
+  remoteApply: () => ipcRenderer.invoke('remote:apply'),
   attachApp: () => ipcRenderer.invoke('ui:attach'),
   showHome: () => ipcRenderer.invoke('ui:show-home'),
   pickCwd: () => ipcRenderer.invoke('ui:pick-cwd'),

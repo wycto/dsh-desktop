@@ -36,6 +36,13 @@ const els = {
   log: $('log'),
   btnCopyLog: $('btn-copy-log'),
   footer: $('footer-info'),
+  chkRemote: $('chk-remote'),
+  inpRemotePort: $('inp-remote-port'),
+  remotePanel: $('remote-panel'),
+  remoteQr: $('remote-qr'),
+  remoteUrls: $('remote-urls'),
+  btnCopyRemote: $('btn-copy-remote'),
+  remoteError: $('remote-error'),
 }
 
 let appInfo = { version: '', platform: '', e2e: null }
@@ -201,6 +208,7 @@ async function onStatus(s) {
       setTimeout(() => window.dsh.e2eShot('app-loaded'), 3500)
       setTimeout(() => e2eNavTest(), 6000)
     }
+    refreshRemote()
   } else if (s.phase === 'starting') {
     phase = 'starting'
     setChip('starting')
@@ -213,7 +221,46 @@ async function onStatus(s) {
     showHomePane()
     setHeaderButtons()
     if (s.error) showErr(s.error)
+    refreshRemote()
   }
+}
+
+// ---------------------------------------------------------------------------
+// 手机 / 局域网访问
+// ---------------------------------------------------------------------------
+
+let lastRemoteUrls = []
+
+function makeQrSvg(text) {
+  try {
+    const qr = qrcode(0, 'M')
+    qr.addData(text)
+    qr.make()
+    return qr.createSvgTag({ cellSize: 3, margin: 2, scalable: true })
+  } catch { return '' }
+}
+
+async function refreshRemote() {
+  const info = await window.dsh.remoteInfo().catch(() => null)
+  if (!info) return
+  const active = info.enabled && info.serviceRunning && info.proxy.running && !!info.token
+  els.remotePanel.classList.toggle('hidden', !active)
+  els.remoteError.classList.toggle('hidden', !info.proxy.error)
+  if (info.proxy.error) els.remoteError.textContent = `转发服务启动失败：${info.proxy.error}。可以换一个访问端口后重试。`
+  lastRemoteUrls = (active ? (info.ips || []) : []).map((ip) => `http://${ip}:${info.port}/?token=${info.token}`)
+  els.remoteUrls.replaceChildren(...lastRemoteUrls.map((u) => {
+    const d = document.createElement('div')
+    d.className = 'remote-url'
+    d.textContent = u
+    return d
+  }))
+  if (!lastRemoteUrls.length && active) {
+    const none = document.createElement('div')
+    none.className = 'muted small'
+    none.textContent = '未发现局域网网卡地址'
+    els.remoteUrls.appendChild(none)
+  }
+  els.remoteQr.innerHTML = lastRemoteUrls[0] ? makeQrSvg(lastRemoteUrls[0]) : ''
 }
 
 // ---------------------------------------------------------------------------
@@ -310,9 +357,28 @@ els.btnCopyLog.addEventListener('click', async () => {
   els.btnCopyLog.textContent = '已复制'
   setTimeout(() => { els.btnCopyLog.textContent = '复制日志' }, 1500)
 })
+els.chkRemote.addEventListener('change', async () => {
+  await window.dsh.saveSettings({ remoteEnabled: els.chkRemote.checked })
+  await window.dsh.remoteApply()
+  refreshRemote()
+})
+els.inpRemotePort.addEventListener('change', async () => {
+  const port = parseInt(els.inpRemotePort.value, 10)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return
+  await window.dsh.saveSettings({ remotePort: port })
+  await window.dsh.remoteApply()
+  refreshRemote()
+})
+els.btnCopyRemote.addEventListener('click', async () => {
+  if (!lastRemoteUrls[0]) return
+  await navigator.clipboard.writeText(lastRemoteUrls[0]).catch(() => {})
+  els.btnCopyRemote.textContent = '已复制'
+  setTimeout(() => { els.btnCopyRemote.textContent = '复制第一个地址' }, 1500)
+})
 
 window.dsh.on('log', (d) => log(d.stream === 'err' ? 'stderr' : d.stream === 'shell' ? 'shell' : 'stdout', d.text))
 window.dsh.on('status', onStatus)
+window.dsh.on('remoteState', () => refreshRemote())
 window.dsh.on('installProgress', (p) => {
   els.installBar.style.width = `${Math.max(2, p.pct || 0)}%`
   els.installMsg.textContent = p.msg || ''
@@ -338,6 +404,8 @@ async function boot() {
   els.inpCwd.value = settings.cwd || ''
   els.chkCheckUpdate.checked = settings.checkUpdate !== false
   els.chkAutoUpdate.checked = !!settings.autoApplyUpdate
+  els.chkRemote.checked = !!settings.remoteEnabled
+  els.inpRemotePort.value = settings.remotePort || 8688
   log('shell', `[壳] DSH Desktop v${appInfo.version} 启动`)
 
   const st = await window.dsh.state()
@@ -365,6 +433,8 @@ async function boot() {
       await window.dsh.saveSettings(appInfo.e2e.preSettings)
       els.inpHost.value = appInfo.e2e.preSettings.host || els.inpHost.value
       els.inpPort.value = appInfo.e2e.preSettings.port || els.inpPort.value
+      if (appInfo.e2e.preSettings.remoteEnabled !== undefined) els.chkRemote.checked = !!appInfo.e2e.preSettings.remoteEnabled
+      if (appInfo.e2e.preSettings.remotePort !== undefined) els.inpRemotePort.value = appInfo.e2e.preSettings.remotePort
     }
     await new Promise((r) => setTimeout(r, 400))
     doStart()

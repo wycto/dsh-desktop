@@ -16,6 +16,7 @@ import path from 'node:path'
 import {
   detectNodeEnv, installNode, latestLtsVersion, spawnEnv,
 } from './nodeenv.mjs'
+import { startProxy, stopProxy, proxyState } from './lanproxy.mjs'
 
 const IS_WIN = process.platform === 'win32'
 const E2E = process.env.DSH_E2E === '1'
@@ -36,6 +37,8 @@ const defaultSettings = () => ({
   autoApplyUpdate: false,
   lastUsedVersion: '',
   confirmQuit: true,
+  remoteEnabled: false,
+  remotePort: 8688,
 })
 let settings = defaultSettings()
 
@@ -207,6 +210,7 @@ function startDshProcess({ host, port, cwd, version, offline }) {
         setStatus('running', { url })
         e2eMark('ready', { url, version: runState.version })
         attachAppView()
+        applyRemote()
       }
       if (/EADDRINUSE|address already in use/i.test(line)) {
         send('dsh:log', { stream: 'shell', text: `[壳] 端口 ${port} 已被占用，请在主页面换一个端口后重新启动` })
@@ -226,6 +230,8 @@ function startDshProcess({ host, port, cwd, version, offline }) {
     const wasIntentional = intentionalStopPids.delete(proc.pid)
     e2eMark('dsh-exit', { code, signal, wasReady })
     detachAppView()
+    stopProxy()
+    send('dsh:remote-state', proxyState())
     if (!wasReady && !wasIntentional) {
       setStatus('idle', {
         url: '', version: '', host: '', port: 0,
@@ -313,6 +319,47 @@ function detachAppView(quiet = false) {
 }
 
 // ---------------------------------------------------------------------------
+// 手机/局域网访问代理
+// ---------------------------------------------------------------------------
+
+function lanAddresses() {
+  const out = []
+  const ifs = os.networkInterfaces()
+  for (const list of Object.values(ifs)) {
+    for (const it of list || []) {
+      if (it.family === 'IPv4' && !it.internal) out.push(it.address)
+    }
+  }
+  return out
+}
+
+/** 按设置与 dsh 运行状态开启/关闭/切换局域网代理，状态变化广播给渲染层。 */
+async function applyRemote() {
+  const want = !!settings.remoteEnabled && runState.phase === 'running' && !!runState.port
+  const cur = proxyState()
+  if (!want) {
+    if (cur.running) {
+      stopProxy()
+      send('dsh:log', { stream: 'shell', text: '[壳] 已关闭手机/局域网访问代理' })
+    }
+    send('dsh:remote-state', proxyState())
+    return proxyState()
+  }
+  if (cur.running && cur.listenPort === settings.remotePort && cur.targetPort === runState.port) return cur
+  stopProxy()
+  const res = await startProxy({
+    listenPort: settings.remotePort,
+    targetPort: runState.port,
+    onLog: (text) => send('dsh:log', { stream: 'shell', text }),
+  })
+  if (res.ok) {
+    send('dsh:log', { stream: 'shell', text: `[壳] 手机访问已开启：0.0.0.0:${settings.remotePort} → 127.0.0.1:${runState.port}（同局域网/VPN 内设备可用）` })
+  }
+  send('dsh:remote-state', proxyState())
+  return res
+}
+
+// ---------------------------------------------------------------------------
 // 窗口
 // ---------------------------------------------------------------------------
 
@@ -376,7 +423,7 @@ ipcMain.handle('app:info', () => ({
 
 ipcMain.handle('settings:get', () => ({ ...settings }))
 ipcMain.handle('settings:set', (_e, patch) => {
-  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion']
+  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion', 'remoteEnabled', 'remotePort']
   for (const k of allowed) if (k in (patch || {})) settings[k] = patch[k]
   saveSettings()
   return { ...settings }
@@ -402,6 +449,20 @@ ipcMain.handle('env:install', async () => {
 ipcMain.handle('dsh:start', (_e, opts) => handleStart(opts || {}))
 ipcMain.handle('dsh:stop', async () => { await killDsh(); return true })
 ipcMain.handle('dsh:state', () => ({ ...runState }))
+
+ipcMain.handle('remote:info', () => {
+  let token = ''
+  try { token = runState.url ? new URL(runState.url).searchParams.get('token') || '' : '' } catch {}
+  return {
+    enabled: !!settings.remoteEnabled,
+    port: settings.remotePort,
+    proxy: proxyState(),
+    serviceRunning: runState.phase === 'running',
+    token,
+    ips: lanAddresses(),
+  }
+})
+ipcMain.handle('remote:apply', () => applyRemote())
 
 ipcMain.handle('ui:attach', () => {
   if (runState.phase === 'running' && runState.url) { attachAppView(); return true }

@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "DSH Web 桌面启动器：双击即用，自动管理 Node 环境与 dsh 更新",
   "homepage": "https://github.com/wycto/dsh-desktop",
   "main": "src/main.mjs",

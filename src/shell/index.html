@@ -102,10 +102,35 @@
           <pre id="log" class="log"></pre>
         </details>
       </div>
+
+      <div class="card remote-card">
+        <h1>手机 / 局域网访问</h1>
+        <p class="muted small">开启后，同一局域网（或 VPN / 内网穿透）内的手机，用浏览器扫码或输入地址即可直接使用 dsh 页面，无需安装任何东西。</p>
+        <div class="check-row">
+          <label><input type="checkbox" id="chk-remote" /> 允许手机 / 局域网访问</label>
+        </div>
+        <div class="field">
+          <label for="inp-remote-port">访问端口</label>
+          <input id="inp-remote-port" type="number" min="1" max="65535" placeholder="8688" />
+          <div class="hint">电脑会以此端口开放转发服务（dsh 本身仍只监听本机，安全限制不变）。</div>
+        </div>
+        <div id="remote-panel" class="hidden">
+          <div class="remote-panel-row">
+            <div id="remote-qr" class="remote-qr" title="手机扫码打开"></div>
+            <div class="remote-links">
+              <div id="remote-urls"></div>
+              <button id="btn-copy-remote" class="btn ghost small">复制第一个地址</button>
+            </div>
+          </div>
+          <div class="hint warn">链接中含访问令牌，拿到即可在电脑上执行 dsh 操作。请仅在可信内网 / VPN 中使用，不要公开传播或代理到不可信网络。</div>
+        </div>
+        <div id="remote-error" class="error-box hidden"></div>
+      </div>
       <div class="footer muted small" id="footer-info"></div>
     </section>
   </main>
 
+  <script src="../vendor/qrcode.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
