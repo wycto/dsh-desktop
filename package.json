@@ -1,9 +1,11 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DSH Web 桌面启动器：双击即用，自动管理 Node 环境与 dsh 更新",
+  "homepage": "https://github.com/wycto/dsh-desktop",
   "main": "src/main.mjs",
+  "desktopName": "dsh-desktop.desktop",
   "author": "weiyi",
   "license": "MIT",
   "private": true,
@@ -12,7 +14,8 @@
     "start": "electron .",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
-    "dist:all": "electron-builder --mac --win"
+    "dist:linux": "electron-builder --linux",
+    "dist:all": "electron-builder --mac --win --linux"
   },
   "devDependencies": {
     "electron": "37.10.3",
