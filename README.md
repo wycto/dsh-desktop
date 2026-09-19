@@ -97,6 +97,19 @@ ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder
 npx electron-builder --mac --win
 ```
 
+## 手机遥控器 App（Android）
+
+`mobile/` 目录是一个极简安卓壳（WebView，无第三方依赖）：安装后粘贴电脑端「手机 / 局域网访问」显示的完整地址（含 token），即可全屏使用 dsh 页面；右上角按钮可刷新或更换地址。
+
+自行构建（需 Android SDK + JDK 17+）：
+
+```bash
+cd mobile
+gradle assembleRelease   # 产物 app/build/outputs/apk/release/app-release.apk
+```
+
+> 当前版本使用 debug 密钥签名，仅供个人侧载；正式分发请更换为自己的 keystore。
+
 ## E2E 自测脚本
 
 ```bash

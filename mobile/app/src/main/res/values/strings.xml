@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DSH 遥控器</string>
+    <string name="menu_desc">菜单</string>
+    <string name="setup_title">连接到电脑上的 DSH</string>
+    <string name="setup_hint">在电脑端 DSH Desktop 的「手机 / 局域网访问」卡片里开启开关，把显示的完整地址（含 token）粘贴到下面。支持局域网、VPN 异地组网或内网穿透地址。</string>
+    <string name="setup_placeholder">http://192.168.1.10:8688/?token=…</string>
+    <string name="setup_connect">连接</string>
+</resources>
