@@ -20,7 +20,7 @@
 - 不熟悉命令行、但想用上 dsh Web 界面的人
 - 帮同事、朋友、家人装 dsh 的"技术担当"：你装完之后，他们以后双击就能用，不用再找你
 - 想要"自动更新、离线也能跑"的省心启动方式的人
-- macOS（Apple Silicon / Intel）与 Windows 64 位用户
+- macOS（Apple Silicon / Intel）、Windows 64 位与 Linux（x64 / arm64）用户
 
 ## 和手动命令行跑有什么区别
 
@@ -48,6 +48,9 @@
 | macOS Apple Silicon | `DSH.Desktop-<版本>-arm64.dmg` | M1/M2/M3/M4 |
 | macOS Intel | `DSH.Desktop-<版本>.dmg` | x64 |
 | Windows 64 位 | `DSH-Desktop-Setup-<版本>.exe` | 一键安装，装完自动启动 |
+| Linux x64 | `DSH-Desktop-<版本>-x86_64.AppImage` | 下载后 `chmod +x` 直接运行，免安装 |
+| Linux arm64 | `DSH-Desktop-<版本>-arm64.AppImage` | 适用于 ARM 笔记本/开发板 |
+| Linux deb | `DSH-Desktop-<版本>-amd64.deb` / `-arm64.deb` | Debian/Ubuntu 系：`sudo apt install ./DSH-Desktop-<版本>-amd64.deb` |
 
 > 安装包未做代码签名：macOS 首次打开若提示"无法验证开发者"，右键 App → 打开，或到
 > 系统设置 → 隐私与安全性里点"仍要打开"；Windows 若弹出 SmartScreen，点"更多信息 → 仍要运行"。
@@ -81,6 +84,7 @@ npm i                # 若 electron 二进制未下载：node node_modules/elect
 npm start            # 开发运行
 npm run dist:mac     # 打 macOS dmg（arm64 + x64）
 npm run dist:win     # 打 Windows NSIS exe
+npm run dist:linux   # 打 Linux AppImage + deb（x64 + arm64）
 npm run gen:icon     # 重新生成 build/icon.png
 ```
 

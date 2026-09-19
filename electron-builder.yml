@@ -46,3 +46,19 @@ nsis:
   runAfterFinish: true
   deleteAppDataOnUninstall: false
   artifactName: DSH-Desktop-Setup-${version}.exe
+
+linux:
+  icon: build/icon.png
+  category: Development
+  maintainer: wycto <wycto@users.noreply.github.com>
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+  artifactName: DSH-Desktop-${version}-${arch}.${ext}
