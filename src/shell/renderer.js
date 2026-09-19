@@ -37,6 +37,7 @@ const els = {
   btnCopyLog: $('btn-copy-log'),
   footer: $('footer-info'),
   chkRemote: $('chk-remote'),
+  selRemoteListen: $('sel-remote-listen'),
   inpRemotePort: $('inp-remote-port'),
   remotePanel: $('remote-panel'),
   remoteQr: $('remote-qr'),
@@ -230,6 +231,7 @@ async function onStatus(s) {
 // ---------------------------------------------------------------------------
 
 let lastRemoteUrls = []
+let selectedRemoteUrl = ''
 
 function makeQrSvg(text) {
   try {
@@ -240,6 +242,12 @@ function makeQrSvg(text) {
   } catch { return '' }
 }
 
+function buildRemoteUrls(info) {
+  const listen = info.listen || '0.0.0.0'
+  if (listen !== '0.0.0.0') return [`http://${listen}:${info.port}/?token=${info.token}`]
+  return (info.ips || []).map((ip) => `http://${ip}:${info.port}/?token=${info.token}`)
+}
+
 async function refreshRemote() {
   const info = await window.dsh.remoteInfo().catch(() => null)
   if (!info) return
@@ -247,11 +255,31 @@ async function refreshRemote() {
   els.remotePanel.classList.toggle('hidden', !active)
   els.remoteError.classList.toggle('hidden', !info.proxy.error)
   if (info.proxy.error) els.remoteError.textContent = `转发服务启动失败：${info.proxy.error}。可以换一个访问端口后重试。`
-  lastRemoteUrls = (active ? (info.ips || []) : []).map((ip) => `http://${ip}:${info.port}/?token=${info.token}`)
+
+  // 监听范围下拉（保留当前选择，探测到新网卡时刷新选项）
+  const listen = info.listen || '0.0.0.0'
+  const options = ['0.0.0.0', ...(info.ips || [])]
+  const current = els.selRemoteListen.value || listen
+  els.selRemoteListen.replaceChildren(...options.map((ip) => {
+    const o = document.createElement('option')
+    o.value = ip
+    o.textContent = ip === '0.0.0.0' ? '所有网卡（默认）' : `仅 ${ip}`
+    return o
+  }))
+  els.selRemoteListen.value = options.includes(current) ? current : listen
+
+  lastRemoteUrls = active ? buildRemoteUrls(info) : []
+  if (!lastRemoteUrls.includes(selectedRemoteUrl)) selectedRemoteUrl = lastRemoteUrls[0] || ''
   els.remoteUrls.replaceChildren(...lastRemoteUrls.map((u) => {
     const d = document.createElement('div')
-    d.className = 'remote-url'
+    d.className = 'remote-url' + (u === selectedRemoteUrl ? ' active' : '')
     d.textContent = u
+    d.title = '点击切换二维码到该地址'
+    d.addEventListener('click', () => {
+      selectedRemoteUrl = u
+      els.remoteQr.innerHTML = makeQrSvg(selectedRemoteUrl)
+      for (const n of els.remoteUrls.children) n.classList.toggle('active', n.textContent === selectedRemoteUrl)
+    })
     return d
   }))
   if (!lastRemoteUrls.length && active) {
@@ -260,7 +288,7 @@ async function refreshRemote() {
     none.textContent = '未发现局域网网卡地址'
     els.remoteUrls.appendChild(none)
   }
-  els.remoteQr.innerHTML = lastRemoteUrls[0] ? makeQrSvg(lastRemoteUrls[0]) : ''
+  els.remoteQr.innerHTML = selectedRemoteUrl ? makeQrSvg(selectedRemoteUrl) : ''
 }
 
 // ---------------------------------------------------------------------------
@@ -369,11 +397,16 @@ els.inpRemotePort.addEventListener('change', async () => {
   await window.dsh.remoteApply()
   refreshRemote()
 })
+els.selRemoteListen.addEventListener('change', async () => {
+  await window.dsh.saveSettings({ remoteListen: els.selRemoteListen.value })
+  await window.dsh.remoteApply()
+  refreshRemote()
+})
 els.btnCopyRemote.addEventListener('click', async () => {
-  if (!lastRemoteUrls[0]) return
-  await navigator.clipboard.writeText(lastRemoteUrls[0]).catch(() => {})
+  if (!selectedRemoteUrl) return
+  await navigator.clipboard.writeText(selectedRemoteUrl).catch(() => {})
   els.btnCopyRemote.textContent = '已复制'
-  setTimeout(() => { els.btnCopyRemote.textContent = '复制第一个地址' }, 1500)
+  setTimeout(() => { els.btnCopyRemote.textContent = '复制选中地址' }, 1500)
 })
 
 window.dsh.on('log', (d) => log(d.stream === 'err' ? 'stderr' : d.stream === 'shell' ? 'shell' : 'stdout', d.text))
@@ -406,6 +439,7 @@ async function boot() {
   els.chkAutoUpdate.checked = !!settings.autoApplyUpdate
   els.chkRemote.checked = !!settings.remoteEnabled
   els.inpRemotePort.value = settings.remotePort || 8688
+  refreshRemote()
   log('shell', `[壳] DSH Desktop v${appInfo.version} 启动`)
 
   const st = await window.dsh.state()

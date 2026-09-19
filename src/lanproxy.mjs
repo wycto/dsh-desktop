@@ -17,7 +17,7 @@ export function proxyState() {
   return { ...state }
 }
 
-export function startProxy({ listenPort, targetPort, onLog = () => {} }) {
+export function startProxy({ listenIp = '0.0.0.0', listenPort, targetPort, onLog = () => {} }) {
   stopProxy()
   return new Promise((resolve) => {
     const s = http.createServer((req, res) => {
@@ -62,14 +62,14 @@ export function startProxy({ listenPort, targetPort, onLog = () => {} }) {
     })
 
     s.on('error', (err) => {
-      state = { running: false, listenPort: 0, targetPort: 0, error: err.message }
-      onLog(`[壳] 手机访问代理启动失败（端口 ${listenPort}）：${err.message}`)
+      state = { running: false, listenIp: '', listenPort: 0, targetPort: 0, error: err.message }
+      onLog(`[壳] 手机访问代理启动失败（${listenIp}:${listenPort}）：${err.message}`)
       resolve({ ok: false, error: err.message })
     })
 
-    s.listen(listenPort, '0.0.0.0', () => {
+    s.listen(listenPort, listenIp, () => {
       server = s
-      state = { running: true, listenPort, targetPort, error: '' }
+      state = { running: true, listenIp, listenPort, targetPort, error: '' }
       resolve({ ok: true })
     })
   })
@@ -78,7 +78,7 @@ export function startProxy({ listenPort, targetPort, onLog = () => {} }) {
 export function stopProxy() {
   const s = server
   server = null
-  state = { running: false, listenPort: 0, targetPort: 0, error: '' }
+  state = { running: false, listenIp: '', listenPort: 0, targetPort: 0, error: '' }
   if (s) {
     try { s.closeAllConnections?.() } catch {}
     try { s.close() } catch {}

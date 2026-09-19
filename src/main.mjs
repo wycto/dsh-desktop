@@ -39,6 +39,7 @@ const defaultSettings = () => ({
   confirmQuit: true,
   remoteEnabled: false,
   remotePort: 8688,
+  remoteListen: '0.0.0.0',
 })
 let settings = defaultSettings()
 
@@ -323,18 +324,24 @@ function detachAppView(quiet = false) {
 // ---------------------------------------------------------------------------
 
 function lanAddresses() {
+  // 物理网卡（en*/eth*/wlan*…）排前面，utun/docker 等虚拟接口排后面，
+  // 让默认展示的地址大概率是手机真正可达的那个
+  const score = (name) => /^(en[0-9]|eth[0-9]*|wlan[0-9]*|eno[0-9]*|ens[0-9a-z]*)/i.test(name) ? 2
+    : /^(utun|docker|bridge|vmnet|veth|awdl|llw|lo)/i.test(name) ? 0
+    : 1
   const out = []
-  const ifs = os.networkInterfaces()
-  for (const list of Object.values(ifs)) {
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const it of list || []) {
-      if (it.family === 'IPv4' && !it.internal) out.push(it.address)
+      if (it.family === 'IPv4' && !it.internal) out.push({ name, address: it.address })
     }
   }
-  return out
+  out.sort((a, b) => score(b.name) - score(a.name))
+  return out.map((it) => it.address)
 }
 
 /** 按设置与 dsh 运行状态开启/关闭/切换局域网代理，状态变化广播给渲染层。 */
 async function applyRemote() {
+  const listenIp = settings.remoteListen || '0.0.0.0'
   const want = !!settings.remoteEnabled && runState.phase === 'running' && !!runState.port
   const cur = proxyState()
   if (!want) {
@@ -345,15 +352,16 @@ async function applyRemote() {
     send('dsh:remote-state', proxyState())
     return proxyState()
   }
-  if (cur.running && cur.listenPort === settings.remotePort && cur.targetPort === runState.port) return cur
+  if (cur.running && cur.listenIp === listenIp && cur.listenPort === settings.remotePort && cur.targetPort === runState.port) return cur
   stopProxy()
   const res = await startProxy({
+    listenIp,
     listenPort: settings.remotePort,
     targetPort: runState.port,
     onLog: (text) => send('dsh:log', { stream: 'shell', text }),
   })
   if (res.ok) {
-    send('dsh:log', { stream: 'shell', text: `[壳] 手机访问已开启：0.0.0.0:${settings.remotePort} → 127.0.0.1:${runState.port}（同局域网/VPN 内设备可用）` })
+    send('dsh:log', { stream: 'shell', text: `[壳] 手机访问已开启：${listenIp}:${settings.remotePort} → 127.0.0.1:${runState.port}` })
   }
   send('dsh:remote-state', proxyState())
   return res
@@ -423,7 +431,7 @@ ipcMain.handle('app:info', () => ({
 
 ipcMain.handle('settings:get', () => ({ ...settings }))
 ipcMain.handle('settings:set', (_e, patch) => {
-  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion', 'remoteEnabled', 'remotePort']
+  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion', 'remoteEnabled', 'remotePort', 'remoteListen']
   for (const k of allowed) if (k in (patch || {})) settings[k] = patch[k]
   saveSettings()
   return { ...settings }
@@ -456,6 +464,7 @@ ipcMain.handle('remote:info', () => {
   return {
     enabled: !!settings.remoteEnabled,
     port: settings.remotePort,
+    listen: settings.remoteListen || '0.0.0.0',
     proxy: proxyState(),
     serviceRunning: runState.phase === 'running',
     token,
