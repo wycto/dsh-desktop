@@ -1,14 +1,18 @@
 # DSH Desktop — DSH Web 桌面启动器
 
+> Desktop launcher for DeepSeek dsh (`npx @deepseek-ai/dsh web`) — double-click to run, no command line needed.
+
 给不会用命令行的人用的 **`npx @deepseek-ai/dsh web`** 桌面壳。双击运行，点一下按钮，dsh 的网页界面直接出现在窗口里。
 
 ## 下载安装
 
+前往 [GitHub Releases](https://github.com/wycto/dsh-desktop/releases) 下载对应平台的安装包：
+
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| macOS Apple Silicon | `dist/DSH Desktop-1.0.0-arm64.dmg` | M1/M2/M3/M4 |
-| macOS Intel | `dist/DSH Desktop-1.0.0.dmg` | x64 |
-| Windows 64 位 | `dist/DSH-Desktop-Setup-1.0.0.exe` | 一键安装，装完自动启动 |
+| macOS Apple Silicon | `DSH Desktop-<版本>-arm64.dmg` | M1/M2/M3/M4 |
+| macOS Intel | `DSH Desktop-<版本>.dmg` | x64 |
+| Windows 64 位 | `DSH-Desktop-Setup-<版本>.exe` | 一键安装，装完自动启动 |
 
 > 安装包未做代码签名：macOS 首次打开若提示"无法验证开发者"，右键 App → 打开，或到
 > 系统设置 → 隐私与安全性里点"仍要打开"；Windows 若弹出 SmartScreen，点"更多信息 → 仍要运行"。
@@ -62,3 +66,7 @@ DSH_E2E=1 DSH_E2E_FAKE_NO_NODE=1 DSH_DESKTOP_INSTALL_DRYRUN=1 …    # 模拟缺
 ```
 
 E2E 过程中的关键节点会写到 `/tmp/dsh-e2e.log`，窗口截图写入 `/tmp/dsh-e2e-<标签>-*.png`。
+
+## 许可证
+
+[MIT](LICENSE)
