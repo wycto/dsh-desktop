@@ -109,7 +109,7 @@ function stopElapsed() { clearInterval(elapsedTimer) }
 function showInstallPane(info) {
   els.paneHome.classList.add('hidden')
   els.paneInstall.classList.remove('hidden')
-  els.envLine.textContent = '未检测到 Node.js / npm'
+  els.envLine.textContent = `v${appInfo.version} · 未检测到 Node.js / npm`
   if (info?.suggestedLts) els.installVer.textContent = `v${info.suggestedLts} LTS`
   if (info?.detail) {
     els.installDetail.textContent = info.detail
@@ -127,7 +127,7 @@ async function refreshEnv({ silent = false } = {}) {
   envOk = !!info.ok
   if (envOk) {
     showHomePane()
-    els.envLine.textContent = `Node ${info.nodeVersion || '?'} · npm ${info.npmVersion || '?'}`
+    els.envLine.textContent = `v${appInfo.version} · Node ${info.nodeVersion || '?'} · npm ${info.npmVersion || '?'}`
     els.footer.textContent = `DSH Desktop v${appInfo.version} · Node ${info.nodeVersion || '?'} · npm ${info.npmVersion || '?'}`
   } else {
     showInstallPane(info)

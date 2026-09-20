@@ -40,8 +40,11 @@ const defaultSettings = () => ({
   remoteEnabled: false,
   remotePort: 8688,
   remoteListen: '0.0.0.0',
+  language: 'zh',
 })
 let settings = defaultSettings()
+// 缩放仅作用于本次启动：每次打开都从 100% 开始，不写入 settings.json
+let zoomFactor = 1
 
 function loadSettings() {
   try {
@@ -58,6 +61,164 @@ function saveSettings() {
 function e2eMark(mark, extra = {}) {
   if (!E2E) return
   try { fs.appendFileSync(E2E_LOG, JSON.stringify({ t: Date.now(), mark, ...extra }) + '\n') } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// 界面语言（菜单 / 对话框）与页面缩放
+// ---------------------------------------------------------------------------
+
+const MESSAGES = {
+  zh: {
+    menuApp: (name) => ({
+      label: name,
+      submenu: [
+        { label: `关于 ${name}`, role: 'about' },
+        { type: 'separator' },
+        { label: '隐藏', role: 'hide' },
+        { label: '隐藏其他窗口', role: 'hideOthers' },
+        { label: '全部显示', role: 'unhide' },
+        { type: 'separator' },
+        { label: `退出 ${name}`, role: 'quit' },
+      ],
+    }),
+    menuFile: '文件',
+    menuClose: '关闭窗口',
+    menuQuit: '退出',
+    menuEdit: '编辑',
+    menuUndo: '撤销',
+    menuRedo: '重做',
+    menuCut: '剪切',
+    menuCopy: '复制',
+    menuPaste: '粘贴',
+    menuPasteMatch: '粘贴并匹配样式',
+    menuDelete: '删除',
+    menuSelectAll: '全选',
+    menuSpeech: '语音',
+    menuStartSpeaking: '开始朗读',
+    menuStopSpeaking: '停止朗读',
+    menuView: '视图',
+    menuWindow: '窗口',
+    menuMinimize: '最小化',
+    menuZoomWindow: '缩放',
+    menuFullscreen: '切换全屏',
+    menuDevTools: '开发者工具',
+    menuReload: '重新加载',
+    menuZoomIn: '放大',
+    menuZoomOut: '缩小',
+    menuZoomReset: '实际大小',
+    menuZoomResetSuffix: '',
+    menuAbout: '关于',
+    menuLang: '语言 / Language',
+    menuLangZh: '中文',
+    menuLangEn: 'English',
+    langSwitchedTitle: 'Language',
+    langSwitched: '界面语言已切换为 English。',
+    updateDialog: {
+      title: '发现 dsh 新版本',
+      message: (latest, prev) => `发现 dsh 新版本 ${latest}（上次使用 ${prev}）。`,
+      detail: '更新需要下载新组件，可能需要几分钟；也可以先用当前版本启动。',
+      buttons: ['立即更新并启动', '使用当前版本启动'],
+    },
+    quitDialog: {
+      title: '退出 DSH Desktop',
+      message: 'dsh 服务正在运行，退出会停止服务。',
+      detail: '未完成的任务会中断，但历史会话不会丢失。',
+      buttons: ['退出并停止服务', '取消'],
+      checkbox: '下次不再询问',
+    },
+    pickCwdTitle: '选择工作目录',
+  },
+  en: {
+    menuApp: (name) => ({ label: name, submenu: [{ role: 'appMenu' }] }),
+    menuFile: 'File',
+    menuClose: 'Close Window',
+    menuQuit: 'Quit',
+    menuEdit: 'Edit',
+    menuUndo: 'Undo',
+    menuRedo: 'Redo',
+    menuCut: 'Cut',
+    menuCopy: 'Copy',
+    menuPaste: 'Paste',
+    menuPasteMatch: 'Paste and Match Style',
+    menuDelete: 'Delete',
+    menuSelectAll: 'Select All',
+    menuSpeech: 'Speech',
+    menuStartSpeaking: 'Start Speaking',
+    menuStopSpeaking: 'Stop Speaking',
+    menuView: 'View',
+    menuWindow: 'Window',
+    menuMinimize: 'Minimize',
+    menuZoomWindow: 'Zoom',
+    menuFullscreen: 'Toggle Full Screen',
+    menuDevTools: 'Developer Tools',
+    menuReload: 'Reload',
+    menuZoomIn: 'Zoom In',
+    menuZoomOut: 'Zoom Out',
+    menuZoomReset: 'Actual Size',
+    menuZoomResetSuffix: '',
+    menuAbout: 'About',
+    menuLang: 'Language / 语言',
+    menuLangZh: '中文',
+    menuLangEn: 'English',
+    langSwitchedTitle: '界面语言',
+    langSwitched: '界面语言已切换为中文。',
+    updateDialog: {
+      title: 'New dsh version available',
+      message: (latest, prev) => `A new dsh version ${latest} is available (previously used ${prev}).`,
+      detail: 'Updating needs to download new components and may take a few minutes; you can also start with the current version.',
+      buttons: ['Update now and start', 'Start with current version'],
+    },
+    quitDialog: {
+      title: 'Quit DSH Desktop',
+      message: 'The dsh service is still running. Quitting will stop it.',
+      detail: 'Unfinished tasks will be interrupted, but history sessions are kept.',
+      buttons: ['Quit and stop service', 'Cancel'],
+      checkbox: "Don't ask again",
+    },
+    pickCwdTitle: 'Select Working Directory',
+  },
+}
+
+/** 当前界面语言（未设置时跟随系统，非中文一律英文）。 */
+function lang() {
+  const l = settings.language
+  if (l === 'zh' || l === 'en') return l
+  return (app.getLocale() || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+const T = () => MESSAGES[lang()]
+
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 3
+
+/**
+ * 整体缩放（与浏览器一致：顶栏和页面一起缩放，且顶栏永远不会遮住页面）。
+ *
+ * 原理：壳页面按 zoomFactor 缩放；内嵌 dsh 页面固定 zoomFactor=1/s，
+ * 同时把它的可视区域放大 s 倍——内嵌页内容的呈现尺寸 = 区域 × s × (1/s)，
+ * 即始终与壳顶栏严丝合缝，视觉上只有壳在缩放，实现整体缩放不遮挡。
+ * 仅本次会话生效，每次启动从 100% 开始。
+ */
+function setZoom(factor) {
+  zoomFactor = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(factor * 100) / 100))
+  if (win && !win.isDestroyed()) win.webContents.setZoomFactor(zoomFactor)
+  if (appView) {
+    appView.webContents.setZoomFactor(1 / zoomFactor)
+    appView.setBounds(contentRect())
+  }
+}
+
+/** Ctrl/⌘ +/-/0 缩放（只由 before-input-event 处理，避免与菜单加速器重复触发）。 */
+function registerZoomShortcuts() {
+  const zoom = (dir) => setZoom(dir === 0 ? 1 : zoomFactor + 0.1 * dir)
+  const onKey = (_e, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta)) return
+    const key = (input.key || '').toLowerCase()
+    if (key === '=' || key === '+') zoom(1)
+    else if (key === '-') zoom(-1)
+    else if (key === '0') zoom(0)
+  }
+  win.webContents.on('before-input-event', onKey)
+  appView?.webContents.on('before-input-event', onKey)
 }
 
 // ---------------------------------------------------------------------------
@@ -131,12 +292,13 @@ async function resolveVersion(opts) {
   if (E2E && process.env.DSH_E2E_UPDATE_CHOICE) {
     useLatest = process.env.DSH_E2E_UPDATE_CHOICE === 'update'
   } else {
+    const d = T().updateDialog
     const { response } = await dialog.showMessageBox(win, {
       type: 'question',
-      title: '发现 dsh 新版本',
-      message: `发现 dsh 新版本 ${latest}（上次使用 ${prev}）。`,
-      detail: '更新需要下载新组件，可能需要几分钟；也可以先用当前版本启动。',
-      buttons: ['立即更新并启动', '使用当前版本启动'],
+      title: d.title,
+      message: d.message(latest, prev),
+      detail: d.detail,
+      buttons: d.buttons,
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -280,7 +442,8 @@ let appView = null
 
 function contentRect() {
   const [w, h] = win.getContentSize()
-  return { x: 0, y: HEADER_H, width: w, height: Math.max(1, h - HEADER_H) }
+  // 内嵌页可视区域放大 s 倍，配合其 zoomFactor=1/s，内容呈现尺寸与壳一致
+  return { x: 0, y: HEADER_H, width: Math.round(w * zoomFactor), height: Math.max(1, Math.round((h - HEADER_H) * zoomFactor)) }
 }
 
 function attachAppView() {
@@ -295,6 +458,7 @@ function attachAppView() {
     },
   })
   appView.setBackgroundColor('#f6f7fb')
+  appView.webContents.setZoomFactor(1 / Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomFactor)))
   appView.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:/i.test(target)) shell.openExternal(target)
     return { action: 'deny' }
@@ -368,8 +532,139 @@ async function applyRemote() {
 }
 
 // ---------------------------------------------------------------------------
-// 窗口
+// 应用菜单（中英文，含页面缩放与语言切换）
 // ---------------------------------------------------------------------------
+
+function buildMenu() {
+  const t = T()
+  const isMac = process.platform === 'darwin'
+
+  const template = [
+    ...(isMac ? [t.menuApp(app.name)] : []),
+    {
+      label: t.menuFile,
+      submenu: [
+        ...(isMac ? [] : [
+          { label: t.menuAbout, click: showAbout },
+          { type: 'separator' },
+        ]),
+        isMac
+          ? { label: t.menuClose, role: 'close' }
+          : { label: t.menuQuit, role: 'quit' },
+      ],
+    },
+    {
+      label: t.menuEdit,
+      submenu: [
+        { label: t.menuUndo, role: 'undo' },
+        { label: t.menuRedo, role: 'redo' },
+        { type: 'separator' },
+        { label: t.menuCut, role: 'cut' },
+        { label: t.menuCopy, role: 'copy' },
+        { label: t.menuPaste, role: 'paste' },
+        ...(isMac ? [
+          { label: t.menuPasteMatch, role: 'pasteAndMatchStyle' },
+          { label: t.menuDelete, role: 'delete' },
+          { label: t.menuSelectAll, role: 'selectAll' },
+          { type: 'separator' },
+          {
+            label: t.menuSpeech,
+            submenu: [
+              { label: t.menuStartSpeaking, role: 'startSpeaking' },
+              { label: t.menuStopSpeaking, role: 'stopSpeaking' },
+            ],
+          },
+        ] : [
+          { label: t.menuDelete, role: 'delete' },
+          { type: 'separator' },
+          { label: t.menuSelectAll, role: 'selectAll' },
+        ]),
+      ],
+    },
+    {
+      label: t.menuView,
+      submenu: [
+        { label: t.menuReload, role: 'reload' },
+        { label: t.menuDevTools, role: 'toggleDevTools' },
+        { type: 'separator' },
+        {
+          label: `${t.menuZoomIn}（Ctrl +）`,
+          click: () => setZoom(zoomFactor + 0.1),
+        },
+        {
+          label: `${t.menuZoomOut}（Ctrl -）`,
+          click: () => setZoom(zoomFactor - 0.1),
+        },
+        {
+          label: `${t.menuZoomReset}（Ctrl 0）${t.menuZoomResetSuffix}`,
+          click: () => setZoom(1),
+        },
+        { type: 'separator' },
+        { label: t.menuFullscreen, role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: t.menuLang,
+      submenu: [
+        {
+          label: t.menuLangZh,
+          type: 'radio',
+          checked: lang() === 'zh',
+          click: () => switchLang('zh'),
+        },
+        {
+          label: t.menuLangEn,
+          type: 'radio',
+          checked: lang() === 'en',
+          click: () => switchLang('en'),
+        },
+      ],
+    },
+    {
+      label: t.menuWindow,
+      submenu: [
+        { label: t.menuMinimize, role: 'minimize' },
+        ...(isMac ? [{ label: t.menuZoomWindow, role: 'zoom' }] : []),
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function rebuildMenu() {
+  try { buildMenu() } catch {}
+}
+
+function showAbout() {
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'DSH Desktop',
+    message: `DSH Desktop v${app.getVersion()}`,
+    detail: 'DSH Web 桌面启动器：双击即用，自动管理 Node 环境与 dsh 更新\nhttps://github.com/wycto/dsh-desktop',
+    buttons: ['OK'],
+    noLink: true,
+  })
+}
+
+async function switchLang(l) {
+  settings.language = l
+  saveSettings()
+  rebuildMenu()
+  send('dsh:lang', { lang: l })
+  // 内嵌 dsh 页面是它自己的界面，同步切换它的显示语言
+  try {
+    if (appView) await appView.webContents.executeJavaScript(
+      `localStorage.setItem('locale', ${JSON.stringify(l === 'zh' ? 'zh-CN' : 'en-US')}); location.reload()`, true)
+  } catch {}
+  const msg = MESSAGES[l]
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: msg.langSwitchedTitle,
+    message: msg.langSwitched,
+    buttons: ['OK'],
+    noLink: true,
+  })
+}
 
 let win = null
 let quitting = false
@@ -380,7 +675,7 @@ function createWindow() {
     height: 760,
     minWidth: 820,
     minHeight: 560,
-    title: 'DSH Web 桌面版',
+    title: `DSH Web 桌面版 v${app.getVersion()}`,
     backgroundColor: '#f6f7fb',
     show: false,
     webPreferences: {
@@ -390,6 +685,7 @@ function createWindow() {
       sandbox: false,
     },
   })
+  registerZoomShortcuts()
   win.loadFile(path.join(import.meta.dirname, 'shell', 'index.html'))
   win.once('ready-to-show', () => win.show())
   win.on('resize', () => { if (appView) appView.setBounds(contentRect()) })
@@ -399,15 +695,16 @@ function createWindow() {
     const running = runState.phase === 'running' || runState.phase === 'starting'
     if (!running || !settings.confirmQuit) return
     e.preventDefault()
+    const d = T().quitDialog
     const { response, checkboxChecked } = await dialog.showMessageBox(win, {
       type: 'question',
-      title: '退出 DSH Desktop',
-      message: 'dsh 服务正在运行，退出会停止服务。',
-      detail: '未完成的任务会中断，但历史会话不会丢失。',
-      buttons: ['退出并停止服务', '取消'],
+      title: d.title,
+      message: d.message,
+      detail: d.detail,
+      buttons: d.buttons,
       defaultId: 0,
       cancelId: 1,
-      checkboxLabel: '下次不再询问',
+      checkboxLabel: d.checkbox,
       checkboxChecked: false,
       noLink: true,
     })
@@ -431,7 +728,7 @@ ipcMain.handle('app:info', () => ({
 
 ipcMain.handle('settings:get', () => ({ ...settings }))
 ipcMain.handle('settings:set', (_e, patch) => {
-  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion', 'remoteEnabled', 'remotePort', 'remoteListen']
+  const allowed = ['host', 'port', 'cwd', 'checkUpdate', 'autoApplyUpdate', 'confirmQuit', 'lastUsedVersion', 'remoteEnabled', 'remotePort', 'remoteListen', 'language']
   for (const k of allowed) if (k in (patch || {})) settings[k] = patch[k]
   saveSettings()
   return { ...settings }
@@ -481,7 +778,7 @@ ipcMain.handle('ui:show-home', () => { detachAppView(); return true })
 
 ipcMain.handle('ui:pick-cwd', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: '选择工作目录',
+    title: T().pickCwdTitle,
     properties: ['openDirectory'],
     defaultPath: settings.cwd || os.homedir(),
   })
@@ -521,12 +818,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     loadSettings()
-    const menu = Menu.buildFromTemplate([
-      ...(IS_WIN ? [] : [{ role: 'appMenu' }]),
-      { role: 'editMenu' },
-      { role: 'windowMenu' },
-    ])
-    Menu.setApplicationMenu(menu)
+    buildMenu()
     createWindow()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
