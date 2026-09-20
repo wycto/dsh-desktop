@@ -222,6 +222,155 @@ function registerZoomShortcuts() {
 }
 
 // ---------------------------------------------------------------------------
+// dsh 插件保障：手机端布局（底部 Tab 导航等）依赖 dsh-dock 插件的宿主注入，
+// 但 dsh 的 web profile 默认不带它。这里在每次启动前确保 profile 里已安装
+// 且版本不太旧：缺失/过旧时经 `dsh plugin --profile web add dsh-dock@latest`
+// 安装（内部走 pnpm，需要 corepack 或全局 pnpm）；失败只记日志不阻断启动
+// （旧 dsh-dock 或没有它时只是没有新布局，核心功能不受影响）。
+// ---------------------------------------------------------------------------
+
+const DOCK_PKG = 'dsh-dock'
+const DOCK_MIN_VERSION = '0.11.5' // 首个包含手机端底部 Tab 布局的版本
+
+/** 比较 semver（只取前三段数字），a<b 返回负数。 */
+function semverCmp(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0)
+  const pb = String(b).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < 3; i++) { const d = pa[i] - pb[i]; if (d) return d }
+  return 0
+}
+
+/** 读 web profile 里已安装的 dsh-dock 版本（没有则 null）。 */
+function readDockInstalled(profileDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(profileDir, 'node_modules', DOCK_PKG, 'package.json'), 'utf8'))
+    return typeof pkg.version === 'string' ? pkg.version : null
+  } catch { return null }
+}
+
+/** profile 的 package.json 里 dsh-dock 是否为 file:/link: 本地路径（开发者环境，不覆盖）。 */
+function dockIsLocalLink(profileDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(profileDir, 'package.json'), 'utf8'))
+    const spec = pkg.dependencies?.[DOCK_PKG] || ''
+    return /^(file|link):/i.test(spec)
+  } catch { return false }
+}
+
+// dsh-dock 依赖链里的 @deepseek-ai/dsh-* 包互相用 `>=0.1.x <0.2.0-0` 区间依赖，
+// 但这些包的 latest dist-tag 停在 0.0.1-rc.1（0.1.x 都打在 next/alpha 上），
+// pnpm 按区间解析会报 NO_MATCHING_VERSION。安装前在 profile 的 package.json
+// 里把这些包声明为顶层精确依赖 + pnpm overrides 自引用钉住，解析就通了。
+const DOCK_DEP_PINS = {
+  '@deepseek-ai/dsh-invariants': '0.1.5-rc.2',
+  '@deepseek-ai/dsh-brand': '0.1.5-rc.2',
+}
+
+/** 往 profile 的 package.json 写入依赖钉与 overrides（幂等；已有更高版本的依赖不动）。 */
+function ensureDockDepPins(profileDir, log) {
+  const file = path.join(profileDir, 'package.json')
+  let pkg
+  try { pkg = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return }
+  let changed = false
+  pkg.dependencies = pkg.dependencies || {}
+  for (const [name, ver] of Object.entries(DOCK_DEP_PINS)) {
+    const cur = pkg.dependencies[name]
+    if (cur && !/^(file|link):/i.test(cur)) continue // 已声明（假定用户自己管理）
+    if (cur && /^(file|link):/i.test(cur)) continue   // 本地 link 不覆盖
+    if (!cur) { pkg.dependencies[name] = ver; changed = true }
+  }
+  if (changed) {
+    pkg.pnpm = pkg.pnpm || {}
+    pkg.pnpm.overrides = pkg.pnpm.overrides || {}
+    for (const name of Object.keys(DOCK_DEP_PINS)) {
+      if (!pkg.pnpm.overrides[name]) pkg.pnpm.overrides[name] = `$${name}`
+    }
+    try {
+      fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + '\n')
+      log('[壳] 已在 web profile 写入 @deepseek-ai/dsh-* 依赖钉（修复 dsh-dock 依赖链 dist-tag 断链）')
+    } catch {}
+  }
+}
+
+/** 定位 pnpm 的 JS 入口：用户全局安装优先，corepack 缓存兜底。 */
+function findPnpmCli(nodeDir) {
+  const candidates = [
+    // 官方 Node 全局安装（npm i -g pnpm）：<prefix>/lib/node_modules/pnpm/bin/pnpm.cjs
+    nodeDir ? path.join(nodeDir, '..', 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs') : '',
+    // Windows 全局：<nodeDir>/node_modules/pnpm/bin/pnpm.cjs
+    nodeDir ? path.join(nodeDir, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs') : '',
+  ]
+  // corepack 缓存：~/Library/pnpm 或 ~/.cache/node/corepack
+  const home = os.homedir()
+  for (const root of [path.join(home, 'Library', 'pnpm'), path.join(home, '.cache', 'node', 'corepack', 'pnpm')]) {
+    try {
+      for (const v of fs.readdirSync(root).sort().reverse()) {
+        candidates.push(path.join(root, v, 'dist', 'pnpm.cjs'))
+        candidates.push(path.join(root, v, 'bin', 'pnpm.cjs'))
+      }
+    } catch {}
+  }
+  for (const p of candidates) { if (p && fs.existsSync(p)) return p }
+  return null
+}
+
+/**
+ * 确保 web profile 已装 dsh-dock 且 ≥ DOCK_MIN_VERSION。
+ * @param {object} info detectNodeEnv() 的结果（需要 nodePath / nodeDir）
+ * @param {(text: string) => void} log 往壳日志写一行
+ * @returns {Promise<'ok'|'installed'|'updated'|'dev-link'|'skipped'|'failed'>}
+ */
+async function ensureDockPlugin(info, log) {
+  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+  const profileDir = path.join(dshHome, 'profiles', 'web')
+  const installed = readDockInstalled(profileDir)
+  if (dockIsLocalLink(profileDir)) {
+    log(`[壳] dsh-dock 是本地 link 安装（开发环境），跳过自动更新（当前 ${installed || '?'}）`)
+    return 'dev-link'
+  }
+  if (installed && semverCmp(installed, DOCK_MIN_VERSION) >= 0) return 'ok'
+
+  const pnpmCli = findPnpmCli(info?.nodeDir)
+  if (!pnpmCli) {
+    log('[壳] 未找到 pnpm（corepack 未启用且未全局安装），无法自动安装 dsh-dock；手机端将没有新版布局。可手动执行：npm i -g pnpm 后重启。')
+    return 'skipped'
+  }
+  const dshCli = path.join(dshHome, 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  if (!fs.existsSync(dshCli)) {
+    log('[壳] 未找到 dsh CLI（profile 尚未初始化），跳过 dsh-dock 自动安装（首次启动 dsh 后下次生效）')
+    return 'skipped'
+  }
+  const action = installed ? `更新 dsh-dock ${installed} → ${DOCK_MIN_VERSION}` : '安装 dsh-dock'
+  log(`[壳] 正在${action}（手机端布局依赖）…`)
+  ensureDockDepPins(profileDir, log)
+  const code = await new Promise((resolve) => {
+    // 1) 版本固定 DOCK_MIN_VERSION 而非 @latest：@deepseek-ai/dsh-* 依赖链的
+    //    dist-tag 停在旧版（latest=0.0.1-rc.1），@latest 会被 pnpm 解析失败；
+    // 2) --config.minimum-release-age=0：本机 pnpm 有 minimumReleaseAge=1440
+    //    （一天内的版本不可见），刚发的版本会被悄悄回退到旧版，必须关掉。
+    const p = spawn(info.nodePath, [dshCli, 'plugin', '--profile', 'web', 'add', `${DOCK_PKG}@${DOCK_MIN_VERSION}`,
+      '--config.minimum-release-age=0'], {
+      env: spawnEnv(info.nodeDir),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let tail = ''
+    const pump = (d) => { tail = (tail + d.toString('utf8')).slice(-4000) }
+    p.stdout.on('data', pump)
+    p.stderr.on('data', pump)
+    p.on('error', () => resolve(-1))
+    p.on('exit', (c) => resolve(c ?? -1))
+    setTimeout(() => { try { p.kill('SIGKILL') } catch {} }, 5 * 60 * 1000) // pnpm 拉依赖慢，5 分钟兜底
+  })
+  const after = readDockInstalled(profileDir)
+  if (code === 0 && after && semverCmp(after, DOCK_MIN_VERSION) >= 0) {
+    log(`[壳] dsh-dock ${after} 已${installed ? '更新' : '安装'}（重启 dsh 后手机端布局生效）`)
+    return installed ? 'updated' : 'installed'
+  }
+  log(`[壳] dsh-dock 自动${installed ? '更新' : '安装'}失败（exit=${code}），将使用现有版本${installed ? ` ${installed}` : '（未安装）'}；手机端可能没有新版布局`)
+  return 'failed'
+}
+
+// ---------------------------------------------------------------------------
 // dsh 子进程状态
 // ---------------------------------------------------------------------------
 
@@ -428,6 +577,15 @@ async function handleStart(opts = {}) {
   if (runState.phase === 'starting' || runState.phase === 'running') await killDsh()
 
   setStatus('starting')
+  // 手机端布局依赖 dsh-dock 插件的宿主注入：启动前确保已装且版本达标
+  // （本地 link 的开发者环境、缺 pnpm、安装失败都只在日志提示，不阻断启动）
+  const log = (text) => send('dsh:log', { stream: 'shell', text })
+  try {
+    const r = await ensureDockPlugin(envInfo, log)
+    e2eMark('dock-plugin', { result: r })
+  } catch (err) {
+    log(`[壳] 检查 dsh-dock 插件出错（${err.message}），按现有状态继续启动`)
+  }
   const picked = await resolveVersion({ checkUpdate, autoApplyUpdate })
   e2eMark('version-picked', picked)
   startDshProcess({ host, port, cwd, version: picked.version, offline: picked.offline })
