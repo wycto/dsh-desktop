@@ -3,7 +3,7 @@ productName: DSH Desktop
 copyright: DSH Desktop
 
 directories:
-  output: dist
+  output: dist/${version}
   buildResources: build
 
 files:
