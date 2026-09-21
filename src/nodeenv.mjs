@@ -10,11 +10,13 @@
  *   Windows 用 msi + PowerShell RunAs（UAC 弹窗点“是”即可），全程用户只点确认。
  */
 import { spawn, execFile } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import zlib from 'node:zlib'
 
 export const FALLBACK_LTS = '22.21.1' // nodejs.org/dist/index.json 不可达时的兜底 LTS 版本
 export const NODE_DIST_BASE = 'https://nodejs.org/dist'
@@ -225,10 +227,189 @@ export async function detectNodeEnv() {
 }
 
 /** 启动 dsh 子进程要用的环境变量（把 node 目录放到 PATH 最前）。 */
-export function spawnEnv(nodeDir) {
+export function spawnEnv(nodeDir, extraDirs = []) {
   const env = { ...process.env }
-  if (nodeDir) env.PATH = nodeDir + path.delimiter + (env.PATH || '')
+  const prefix = [...new Set([...(extraDirs.filter(Boolean)), nodeDir].filter(Boolean))]
+  if (prefix.length) env.PATH = prefix.join(path.delimiter) + path.delimiter + (env.PATH || '')
   return env
+}
+
+// ---------------------------------------------------------------------------
+// pnpm 检测与自动安装（dsh plugin 内部 spawnSync("pnpm")，只认 PATH 上的命令）
+// ---------------------------------------------------------------------------
+
+// 用固定版本而非 @latest：安装是“环境保障”不是“尝鲜”，钉住避免上游发版
+// 带新问题影响所有用户。独立二进制来自官方 @pnpm/<平台> 包，内置 Node，
+// 装到 ~/.dsh/bin，不写系统目录、不需要管理员权限。
+const PNPM_VERSION = '10.34.5'
+// dsh-dock 的安装依赖 package.json 里的 pnpm.overrides（v8 起支持）与
+// --config.* 参数，过旧的 pnpm 装不上；达不到要求就装独立版（不动用户的）
+const PNPM_MIN_VERSION = '9.0.0'
+// @pnpm/<平台>@<版本> 的 sha512 完整性校验值（来自 npm registry dist.integrity）
+const PNPM_INTEGRITY = {
+  'linux-x64': 'sha512-blNFcW3EVmOkeZYnkY5lraD1+oqiFvSByMT3GTRGKp7P7C4PtHixLQJLe2AzJ4rLimFjgqfHg0Cf/Si/9bZlHQ==',
+  'linux-arm64': 'sha512-sV8iFna/MN7BMDuBmAEJqhzlywAoJ8LXXjrMR3IkeoDtP9PBY5j/AkGHa9woVDZMAEIAMxWV7sBnyPxiN5ByGA==',
+  'darwin-x64': 'sha512-KrvYm3ArCMCT/rZnBUYPC6phvWxowpgJzIa/19UY4/2GL0L4CGUX8sGB30qI1lae1numn/6s2VkSCFF4VrZuyg==',
+  'darwin-arm64': 'sha512-Uxvslz0yx/IICmP0EoGs+H9j4cA3JXV0mjtvAOisht0y/FCjS1GkGj8BA+EudDwmc9vsgtOrnq6tRFRluCsIsA==',
+  'win32-x64': 'sha512-bMjuj4KrPeqLqb66AS1ABqbbjow3JW0odFil70HC+PAwVM0meACH2Alv3IfrrxKgoO/yqCpOIttesT/tVbsOSA==',
+  'win32-arm64': 'sha512-r7fdkZEmIJzXXZMrOfu2j2sUmLlLvuXVJ48NER6bT/UtaIIZYXTUNy6/ejYLxf2PBqyOruhjYmVqkJthk6v1yA==',
+}
+
+/** pnpm 独立二进制的安装目录（用户目录内；加入子进程 PATH）。 */
+export function pnpmBinDir() {
+  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
+  return path.join(dshHome, 'bin')
+}
+
+/** semver 只比较前三段数字，a ≥ min 返回 true。 */
+function versionAtLeast(v, min) {
+  const a = String(v).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0)
+  const b = String(min).split('.').map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < 3; i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d > 0 }
+  return true
+}
+
+/** 实际跑 `pnpm -v` 验证可用，返回版本号或 null（PATH 上可能有坏 shim）。 */
+async function pnpmVersionAt(exe) {
+  const out = WIN && !/\.exe$/i.test(exe)
+    ? await run('cmd.exe', ['/c', exe, '-v'], { timeout: 15000 })
+    : await run(exe, ['-v'], { timeout: 15000 })
+  const v = (out || '').trim().split(/\r?\n/).pop()?.trim()
+  return /^v?\d+\.\d+/.test(v || '') ? v.replace(/^v/, '') : null
+}
+
+/** 找系统里已有的 pnpm（shell PATH 优先，常见位置兜底），返回 {exe,version} 或 null。 */
+async function findExistingPnpm() {
+  const h = os.homedir()
+  const exeName = WIN ? 'pnpm.exe' : 'pnpm'
+  const candidates = [
+    // 我们自己装的独立版（后续启动走这条，秒回）
+    path.join(pnpmBinDir(), exeName),
+    path.join(h, '.local', 'bin', 'pnpm'),
+    path.join(h, 'Library', 'pnpm', 'pnpm'),
+  ]
+  if (process.env.PNPM_HOME) candidates.push(path.join(process.env.PNPM_HOME, exeName))
+  if (WIN) candidates.push(path.join(process.env['APPDATA'] || path.join(h, 'AppData', 'Roaming'), 'npm', 'pnpm.cmd'))
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue
+    const v = await pnpmVersionAt(p)
+    if (v) return { exe: p, version: v }
+  }
+  // 用户 shell 的 PATH（图形界面启动时 process.env.PATH 往往不全）
+  const tries = WIN
+    ? [['cmd.exe', ['/c', 'where', 'pnpm']]]
+    : [
+        ['/bin/zsh', ['-l', '-i', '-c', 'command -v pnpm || true']],
+        ['/bin/bash', ['-l', '-c', 'command -v pnpm || true']],
+      ]
+  for (const [cmd, args] of tries) {
+    const out = await run(cmd, args, { timeout: 8000 })
+    for (const line of (out || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
+      if (!fs.existsSync(line)) continue
+      const v = await pnpmVersionAt(line)
+      if (v) return { exe: line, version: v }
+    }
+  }
+  return null
+}
+
+/** 当前平台对应的 @pnpm/<平台> 包名后缀，没有独立二进制的平台返回 null。 */
+function pnpmPlatform() {
+  const osName = { win32: 'win', darwin: 'macos', linux: 'linux' }[process.platform]
+  if (!osName) return null
+  const key = `${process.platform}-${process.arch}`
+  return PNPM_INTEGRITY[key] ? `${osName}-${process.arch === 'arm64' ? 'arm64' : 'x64'}` : null
+}
+
+/**
+ * 确保能给 dsh 提供可用的 pnpm：先检测已有安装（版本要达标），
+ * 没有就从用户已配置的 npm registry（尊重国内镜像）下载官方独立二进制
+ * 装到 ~/.dsh/bin 并 chmod +x。不改动用户自己的 pnpm。
+ * @param {string} nodeDir 已检测到的 Node 目录（用于查 registry）
+ * @param {(text: string) => void} log 往壳日志写一行
+ * @returns {Promise<{ok: boolean, pnpmDir: string}>} pnpmDir 要前置到子进程 PATH
+ */
+export async function ensurePnpm(nodeDir, log = () => {}) {
+  const binDir = pnpmBinDir()
+  const found = process.env.DSH_DESKTOP_FORCE_PNPM_INSTALL === '1' ? null : await findExistingPnpm()
+  if (found && versionAtLeast(found.version, PNPM_MIN_VERSION)) {
+    return { ok: true, pnpmDir: path.dirname(found.exe) }
+  }
+  if (found) log(`[壳] 检测到 pnpm v${found.version} 过旧（需 ≥ ${PNPM_MIN_VERSION}），将为 dsh 单独安装 pnpm v${PNPM_VERSION}`)
+
+  const plat = pnpmPlatform()
+  if (!plat) {
+    log(`[壳] 当前平台（${process.platform}-${process.arch}）没有 pnpm 独立二进制，无法自动安装`)
+    return { ok: false, pnpmDir: found ? path.dirname(found.exe) : '' }
+  }
+  log(`[壳] 未找到可用的 pnpm，正在自动安装官方独立版 pnpm v${PNPM_VERSION} 到 ${binDir} …`)
+  try {
+    const registry = await detectRegistry(nodeDir)
+    const url = `${registry}/@pnpm/${plat}/-/${plat}-${PNPM_VERSION}.tgz`
+    const dest = path.join(binDir, WIN ? 'pnpm.exe' : 'pnpm')
+    await fsp.mkdir(binDir, { recursive: true })
+    await downloadVerified(url, dest, PNPM_INTEGRITY[`${process.platform}-${process.arch}`])
+    if (!WIN) await fsp.chmod(dest, 0o755)
+    const v = await pnpmVersionAt(dest)
+    if (!v) throw new Error('安装后 pnpm 无法运行')
+    log(`[壳] pnpm v${v} 安装完成`)
+    return { ok: true, pnpmDir: binDir }
+  } catch (err) {
+    log(`[壳] pnpm 自动安装失败：${err.message}（不影响 dsh 启动，仅插件自动安装与手机端新版布局可能缺失）`)
+    return { ok: false, pnpmDir: found ? path.dirname(found.exe) : '' }
+  }
+}
+
+/**
+ * 下载 npm 包 tgz，校验 sha512 后解出包内二进制写到 dest。
+ * tgz 结构固定为 package/<name>（pnpm 官方 @pnpm/<平台> 包只有一个可执行文件）。
+ */
+async function downloadVerified(url, dest, want) {
+  const tmp = dest + '.part'
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(120000) })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const tgz = Buffer.from(await resp.arrayBuffer())
+      if (want) {
+        const got = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64')
+        if (got !== want) throw new Error('sha512 校验失败（下载不完整或被篡改）')
+      }
+      const bin = extractTarGzEntry(tgz, 'package/pnpm')
+      if (!bin?.length) throw new Error('tgz 里没有找到 pnpm 二进制')
+      await fsp.writeFile(tmp, bin)
+      await fsp.rename(tmp, dest)
+      return
+    } catch (err) {
+      try { await fsp.rm(tmp, { force: true }) } catch {}
+      if (attempt === 3) throw err
+      await new Promise((r) => setTimeout(r, 1500 * attempt))
+    }
+  }
+}
+
+/**
+ * 从内存 tgz 解出指定条目（gunzip + 手工解析 ustar 头，只读不落盘）。
+ * 只处理普通文件条目；GNU 长名/链接条目直接跳过（@pnpm 的包用不到）。
+ */
+function extractTarGzEntry(tgz, entryName) {
+  try {
+    const tar = zlib.gunzipSync(tgz)
+    let off = 0
+    while (off + 512 <= tar.length) {
+      const header = tar.subarray(off, off + 512)
+      if (header.every((b) => b === 0)) break // 结束块
+      const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '')
+      const size = parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/, '').trim() || '0', 8) || 0
+      const type = String.fromCharCode(header[156] || 48)
+      const dataOff = off + 512
+      if (type === '0' || type === '\0') { // 普通文件（链接/长名条目直接跳过，@pnpm 包用不到）
+        if (name === entryName) return tar.subarray(dataOff, dataOff + size)
+      }
+      off = dataOff + Math.ceil(size / 512) * 512
+    }
+  } catch {}
+  return null
 }
 
 // ---------------------------------------------------------------------------

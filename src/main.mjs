@@ -14,7 +14,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
-  detectNodeEnv, installNode, latestLtsVersion, spawnEnv,
+  detectNodeEnv, installNode, latestLtsVersion, spawnEnv, ensurePnpm, pnpmBinDir,
 } from './nodeenv.mjs'
 import { startProxy, stopProxy, proxyState } from './lanproxy.mjs'
 
@@ -239,9 +239,10 @@ function hookZoomShortcuts(wc) {
 // ---------------------------------------------------------------------------
 // dsh 插件保障：手机端布局（底部 Tab 导航等）依赖 dsh-dock 插件的宿主注入，
 // 但 dsh 的 web profile 默认不带它。这里在每次启动前确保 profile 里已安装
-// 且版本不太旧：缺失/过旧时经 `dsh plugin --profile web add dsh-dock@latest`
-// 安装（内部走 pnpm，需要 corepack 或全局 pnpm）；失败只记日志不阻断启动
-// （旧 dsh-dock 或没有它时只是没有新布局，核心功能不受影响）。
+// 且版本不太旧：缺失/过旧时经 `dsh plugin --profile web add dsh-dock@<版本>`
+// 安装。dsh plugin 内部把参数原样转发给 PATH 上的 pnpm，所以启动前先跑
+// ensurePnpm（见 nodeenv.mjs：检测/自动安装 pnpm 到 ~/.dsh/bin 并前置 PATH）。
+// 失败只记日志不阻断启动（旧 dsh-dock 或没有它时只是没有新布局，核心功能不受影响）。
 // ---------------------------------------------------------------------------
 
 const DOCK_PKG = 'dsh-dock'
@@ -307,35 +308,14 @@ function ensureDockDepPins(profileDir, log) {
   }
 }
 
-/** 定位 pnpm 的 JS 入口：用户全局安装优先，corepack 缓存兜底。 */
-function findPnpmCli(nodeDir) {
-  const candidates = [
-    // 官方 Node 全局安装（npm i -g pnpm）：<prefix>/lib/node_modules/pnpm/bin/pnpm.cjs
-    nodeDir ? path.join(nodeDir, '..', 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs') : '',
-    // Windows 全局：<nodeDir>/node_modules/pnpm/bin/pnpm.cjs
-    nodeDir ? path.join(nodeDir, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs') : '',
-  ]
-  // corepack 缓存：~/Library/pnpm 或 ~/.cache/node/corepack
-  const home = os.homedir()
-  for (const root of [path.join(home, 'Library', 'pnpm'), path.join(home, '.cache', 'node', 'corepack', 'pnpm')]) {
-    try {
-      for (const v of fs.readdirSync(root).sort().reverse()) {
-        candidates.push(path.join(root, v, 'dist', 'pnpm.cjs'))
-        candidates.push(path.join(root, v, 'bin', 'pnpm.cjs'))
-      }
-    } catch {}
-  }
-  for (const p of candidates) { if (p && fs.existsSync(p)) return p }
-  return null
-}
-
 /**
  * 确保 web profile 已装 dsh-dock 且 ≥ DOCK_MIN_VERSION。
  * @param {object} info detectNodeEnv() 的结果（需要 nodePath / nodeDir）
  * @param {(text: string) => void} log 往壳日志写一行
+ * @param {string} pnpmDir pnpm 所在目录（已由 ensurePnpm 保障，前置到子进程 PATH）
  * @returns {Promise<'ok'|'installed'|'updated'|'dev-link'|'skipped'|'failed'>}
  */
-async function ensureDockPlugin(info, log) {
+async function ensureDockPlugin(info, log, pnpmDir = '') {
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const profileDir = path.join(dshHome, 'profiles', 'web')
   const installed = readDockInstalled(profileDir)
@@ -345,9 +325,8 @@ async function ensureDockPlugin(info, log) {
   }
   if (installed && semverCmp(installed, DOCK_MIN_VERSION) >= 0) return 'ok'
 
-  const pnpmCli = findPnpmCli(info?.nodeDir)
-  if (!pnpmCli) {
-    log('[壳] 未找到 pnpm（corepack 未启用且未全局安装），无法自动安装 dsh-dock；手机端将没有新版布局。可手动执行：npm i -g pnpm 后重启。')
+  if (!pnpmDir) {
+    log('[壳] pnpm 不可用，无法自动安装 dsh-dock；手机端将没有新版布局（其余功能不受影响）。')
     return 'skipped'
   }
   const dshCli = path.join(dshHome, 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
@@ -365,7 +344,7 @@ async function ensureDockPlugin(info, log) {
     //    （一天内的版本不可见），刚发的版本会被悄悄回退到旧版，必须关掉。
     const p = spawn(info.nodePath, [dshCli, 'plugin', '--profile', 'web', 'add', `${DOCK_PKG}@${DOCK_MIN_VERSION}`,
       '--config.minimum-release-age=0'], {
-      env: spawnEnv(info.nodeDir),
+      env: spawnEnv(info.nodeDir, [pnpmDir]),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tail = ''
@@ -498,13 +477,13 @@ function killDsh() {
   })
 }
 
-function startDshProcess({ host, port, cwd, version, offline }) {
+function startDshProcess({ host, port, cwd, version, offline, pnpmDir = '' }) {
   const spec = version ? `${PKG_SPEC}@${version}` : PKG_SPEC
   const args = [envInfo.npxCliJs, '-y', offline ? '--offline' : '--prefer-offline', spec,
     'web', '--no-open', '--host', host, '--port', String(port)]
   const proc = spawn(envInfo.nodePath, args, {
     cwd,
-    env: spawnEnv(envInfo.nodeDir),
+    env: spawnEnv(envInfo.nodeDir, [pnpmDir]),
     detached: !IS_WIN, // posix 建立新进程组，便于整组杀掉
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -592,18 +571,31 @@ async function handleStart(opts = {}) {
   if (runState.phase === 'starting' || runState.phase === 'running') await killDsh()
 
   setStatus('starting')
+  const log = (text) => send('dsh:log', { stream: 'shell', text })
+  // 环境自举：确保 pnpm 可用（没有就自动装官方独立版到 ~/.dsh/bin），
+  // dsh plugin 安装 dsh-dock 时要在 PATH 上找到 pnpm 命令
+  let pnpmDir = ''
+  try {
+    const r = await ensurePnpm(envInfo.nodeDir, log)
+    pnpmDir = r.pnpmDir
+    e2eMark('pnpm-ensured', { ok: r.ok, dir: r.pnpmDir })
+  } catch (err) {
+    log(`[壳] pnpm 环境检查出错（${err.message}），继续启动`)
+  }
+  try {
+    pnpmDir = pnpmDir || (fs.existsSync(path.join(pnpmBinDir(), IS_WIN ? 'pnpm.exe' : 'pnpm')) ? pnpmBinDir() : '')
+  } catch {}
   // 手机端布局依赖 dsh-dock 插件的宿主注入：启动前确保已装且版本达标
   // （本地 link 的开发者环境、缺 pnpm、安装失败都只在日志提示，不阻断启动）
-  const log = (text) => send('dsh:log', { stream: 'shell', text })
   try {
-    const r = await ensureDockPlugin(envInfo, log)
+    const r = await ensureDockPlugin(envInfo, log, pnpmDir)
     e2eMark('dock-plugin', { result: r })
   } catch (err) {
     log(`[壳] 检查 dsh-dock 插件出错（${err.message}），按现有状态继续启动`)
   }
   const picked = await resolveVersion({ checkUpdate, autoApplyUpdate })
   e2eMark('version-picked', picked)
-  startDshProcess({ host, port, cwd, version: picked.version, offline: picked.offline })
+  startDshProcess({ host, port, cwd, version: picked.version, offline: picked.offline, pnpmDir })
   return { ok: true }
 }
 

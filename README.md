@@ -12,6 +12,7 @@
 
 - Node.js 没装？引导页点一下自动下载安装官方 LTS
 - 装了多种 Node？自动探测 Homebrew、nvm、fnm、volta、scoop 等常见位置并实际运行验证
+- 没有 pnpm？自动下载官方独立版装到 `~/.dsh/bin`（无需管理员，不动已有安装），dsh-dock 插件自动安装不卡壳
 - 有新版本？启动时自动查 npm 源，可选"发现更新自动安装"
 - 断网了？自动回退本地缓存版本继续用，不会卡住
 
@@ -64,6 +65,9 @@
   勾选"发现更新后自动安装"则不再询问。查询失败（离线）时自动改用本地缓存版本（`npx --offline`），不会卡住。
 - **Node.js 一键安装**：第一次使用没有 npm 时，显示引导页，点一下即自动下载官方 LTS 安装包并静默安装
   （macOS 会请求一次开机密码，Windows 会弹一次 UAC 确认）。
+- **pnpm 自动保障**：手机端新布局依赖的 dsh-dock 插件经 `dsh plugin` 安装，内部要用 pnpm。启动时自动检测
+  pnpm（含用户 shell PATH），没有或版本过旧就从用户配置的 npm 源（尊重国内镜像）下载官方独立版
+  （sha512 校验）装到 `~/.dsh/bin`，无需管理员权限，也不改动用户自己的 pnpm。
 - **环境探测**：自动扫描官方安装、Homebrew、nvm、fnm、volta、scoop、asdf、`~/.local/bin` 等常见位置，
   并回退到用户登录 shell 查找，找到的 Node 还会实际运行验证。
 - **离线兜底 / 错误提示**：端口被占用、npm 源不可达等失败会以中文横幅 + 日志提示，不会让用户面对命令行。
@@ -116,6 +120,7 @@ gradle assembleRelease   # 产物 app/build/outputs/apk/release/app-release.apk
 scripts/run-e2e.sh t1 'DSH_E2E_SETTINGS={"port":18501}'            # 开发版全流程
 scripts/run-e2e-pack.sh update                                     # 打包版全流程（更新弹窗自动选"更新"）
 DSH_E2E=1 DSH_E2E_FAKE_NO_NODE=1 DSH_DESKTOP_INSTALL_DRYRUN=1 …    # 模拟缺 Node + 干跑安装下载
+DSH_DESKTOP_FORCE_PNPM_INSTALL=1 DSH_HOME=/tmp/…                   # 强制走 pnpm 自动安装分支（配合隔离 DSH_HOME）
 ```
 
 E2E 过程中的关键节点会写到 `/tmp/dsh-e2e.log`，窗口截图写入 `/tmp/dsh-e2e-<标签>-*.png`。
