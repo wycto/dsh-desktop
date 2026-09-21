@@ -193,22 +193,30 @@ const ZOOM_MAX = 3
 /**
  * 整体缩放（与浏览器一致：顶栏和页面一起缩放，且顶栏永远不会遮住页面）。
  *
- * 原理：壳页面按 zoomFactor 缩放；内嵌 dsh 页面固定 zoomFactor=1/s，
- * 同时把它的可视区域放大 s 倍——内嵌页内容的呈现尺寸 = 区域 × s × (1/s)，
- * 即始终与壳顶栏严丝合缝，视觉上只有壳在缩放，实现整体缩放不遮挡。
- * 仅本次会话生效，每次启动从 100% 开始。
+ * 原理：壳页面与内嵌 dsh 页面设同一个 zoomFactor=s，内嵌页 bounds 的顶边
+ * 下移到 HEADER_H*s（顶栏缩放后的视觉高度）——两层视口宽度始终相同，
+ * 内容视觉尺寸 = CSS 尺寸 × s，严丝合缝。仅本次会话生效，每次启动从 100% 开始。
  */
 function setZoom(factor) {
   zoomFactor = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(factor * 100) / 100))
   if (win && !win.isDestroyed()) win.webContents.setZoomFactor(zoomFactor)
   if (appView) {
-    appView.webContents.setZoomFactor(1 / zoomFactor)
+    appView.webContents.setZoomFactor(zoomFactor)
     appView.setBounds(contentRect())
   }
 }
 
-/** Ctrl/⌘ +/-/0 缩放（只由 before-input-event 处理，避免与菜单加速器重复触发）。 */
-function registerZoomShortcuts() {
+/**
+ * Ctrl/⌘ +/-/0 与 Ctrl+滚轮缩放。壳页面和内嵌 dsh 页面各挂一份（谁有焦点
+ * 谁触发，`setZoom` 同时作用于两者）。滚轮走两条互补通道：
+ *  - zoom-changed：Chromium 对真实 Ctrl+滚轮的原生通知（preventDefault 可
+ *    阻止内嵌页自身缩放，避免叠加）；
+ *  - before-mouse-event(mouseWheel)：兜底（如页面自己 dispatchEvent 合成的
+ *    滚轮不会触发 zoom-changed，但会走到这里）。
+ * 仅由这些事件处理，避免与菜单加速器重复触发。
+ */
+function hookZoomShortcuts(wc) {
+  if (!wc) return
   const zoom = (dir) => setZoom(dir === 0 ? 1 : zoomFactor + 0.1 * dir)
   const onKey = (_e, input) => {
     if (input.type !== 'keyDown' || !(input.control || input.meta)) return
@@ -217,8 +225,15 @@ function registerZoomShortcuts() {
     else if (key === '-') zoom(-1)
     else if (key === '0') zoom(0)
   }
-  win.webContents.on('before-input-event', onKey)
-  appView?.webContents.on('before-input-event', onKey)
+  const onWheel = (e, dy) => {
+    e.preventDefault()
+    zoom((dy ?? 0) < 0 ? 1 : -1)
+  }
+  wc.on('before-input-event', onKey)
+  wc.on('zoom-changed', (e, direction) => onWheel(e, direction === 'in' ? -1 : 1))
+  wc.on('before-mouse-event', (e, m) => {
+    if (m.type === 'mouseWheel' && (m.modifiers || []).includes('control')) onWheel(e, m.deltaY)
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -600,8 +615,9 @@ let appView = null
 
 function contentRect() {
   const [w, h] = win.getContentSize()
-  // 内嵌页可视区域放大 s 倍，配合其 zoomFactor=1/s，内容呈现尺寸与壳一致
-  return { x: 0, y: HEADER_H, width: Math.round(w * zoomFactor), height: Math.max(1, Math.round((h - HEADER_H) * zoomFactor)) }
+  // 顶栏缩放后的视觉高度 = HEADER_H × zoomFactor，内嵌页从它下面开始
+  const top = Math.round(HEADER_H * zoomFactor)
+  return { x: 0, y: top, width: w, height: Math.max(1, h - top) }
 }
 
 function attachAppView() {
@@ -616,7 +632,8 @@ function attachAppView() {
     },
   })
   appView.setBackgroundColor('#f6f7fb')
-  appView.webContents.setZoomFactor(1 / Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomFactor)))
+  appView.webContents.setZoomFactor(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomFactor)))
+  hookZoomShortcuts(appView.webContents)
   appView.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:/i.test(target)) shell.openExternal(target)
     return { action: 'deny' }
@@ -843,7 +860,7 @@ function createWindow() {
       sandbox: false,
     },
   })
-  registerZoomShortcuts()
+  hookZoomShortcuts(win.webContents)
   win.loadFile(path.join(import.meta.dirname, 'shell', 'index.html'))
   win.once('ready-to-show', () => win.show())
   win.on('resize', () => { if (appView) appView.setBounds(contentRect()) })
